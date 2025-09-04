@@ -1,96 +1,111 @@
-# BankID Sandbox — Example
+# Project: BankID + SharePoint examples
 
-A small Node + TypeScript example that demonstrates using the BankID OIDC sandbox (Authorization Code flow + PKCE) to authenticate a user and fetch profile information.
+This repository contains two small TypeScript Express examples demonstrating:
 
-This project starts an HTTPS Express server (self-signed certs are included under `certs/`) and uses `openid-client` to perform discovery, authorization, token exchange, and optional userinfo fetch.
+- BankID (OIDC) sandbox authentication using Authorization Code + PKCE (`src/bankId.ts`).
+- A SharePoint / Microsoft Graph file CRUD API using app-only auth (`src/sharePoint.ts`).
 
-## What this does
-
-- Discovers the BankID sandbox OIDC provider.
-- Initiates an authorization request (Authorization Code + PKCE).
-- Exchanges the code for tokens and validates the ID token (nonce/state).
-- Optionally calls the UserInfo endpoint and exposes combined profile data via routes.
-
-The implementation is in `src/bankId.ts`.
+Both apps are runnable locally. The BankID example runs over HTTPS (self-signed certs included under `certs/`), and the SharePoint API runs over HTTP (default port 3001).
 
 ## Prerequisites
 
 - Node.js (recommended 18+)
-- pnpm (the project was created with pnpm — `pnpm install` will work). The `package.json` lists `pnpm@10.13.1` as the project package manager but any recent pnpm should work.
+- pnpm (the project uses pnpm but npm/yarn may work)
 
-## Install
-
-Open a terminal (zsh) in the project root and run:
+Install dependencies:
 
 ```bash
 pnpm install
 ```
 
-## TLS / certs
+## Top-level scripts
 
-This example serves HTTPS on `https://localhost:3000` using files in `certs/`:
+Key scripts in `package.json`:
 
-- `certs/localhost-key.pem`
-- `certs/localhost-cert.pem`
+- `pnpm dev`  Run the BankID example (`src/bankId.ts`) with `tsx` for fast dev.
+- `pnpm dev:sharepoint`  Run the SharePoint example (`src/sharePoint.ts`) with `tsx`.
+- `pnpm build`  Transpile TypeScript to `dist/`.
+- `pnpm start`  Run the built BankID server from `dist/`.
 
-They are self-signed for local development. Your browser will warn about the certificate — you can accept the risk for local testing.
-
-If you want to generate new certs, use a tool such as mkcert or openssl (not included here).
-
-## Configuration
-
-The example currently hardcodes a `CLIENT_ID`, `CLIENT_SECRET`, and `SERVER_URL` inside `src/bankId.ts` for the sandbox. Do NOT use these values in production.
-
-Recommended minimal changes before sharing or deploying:
-
-- Move client credentials and sensitive values to environment variables.
-- Use a properly issued TLS certificate for production.
-- Replace the session secret with a secure, random value and configure secure cookie settings.
-
-Example environment variables you may add (and load with your preferred method):
-
-- BANKID_CLIENT_ID
-- BANKID_CLIENT_SECRET
-- LISTEN_ORIGIN (e.g. https://localhost:3000)
-
-Note: The example is intentionally minimal and focuses on demonstrating OIDC flows.
-
-## Scripts
-
-The `package.json` includes these useful scripts:
-
-- `pnpm dev` — Run the TypeScript file with `tsx` (fast local dev).
-- `pnpm build` — Transpile TypeScript to `dist/` using `tsc`.
-- `pnpm start` — Run the built JS from `dist/`.
-
-Use them from the project root. Example (zsh):
+Run either service in separate terminals. Example (zsh):
 
 ```bash
+# BankID (HTTPS) server
 pnpm dev
+
+# SharePoint API server (port 3001)
+pnpm dev:sharepoint
 ```
 
-This starts the HTTPS server on port 3000.
+## BankID example (src/bankId.ts)
 
-## HTTP Routes
+- Starts an HTTPS Express server on https://localhost:3000 using `certs/localhost-key.pem` and `certs/localhost-cert.pem`.
+- Uses `openid-client` to discover the sandbox provider and perform Authorization Code + PKCE.
+- Session is used to store PKCE verifier, state and nonce; ID token claims and optional UserInfo are saved in session.
 
-The example exposes a small set of routes useful for testing the flow:
+Important notes:
 
-- GET / — JSON status page; shows login URL when not authenticated and basic profile when authenticated.
-- GET /auth/bankid — Starts the BankID authorization flow (redirects to the provider).
-- GET /auth/bankid/callback — Callback endpoint used by the provider to redirect back with the authorization code.
-- GET /user — Returns a more detailed JSON profile (requires session).
-- GET /logout — Logs out the local session.
-- GET /auth/failure — Shown on authentication errors.
+- The current code hardcodes `CLIENT_ID`, `CLIENT_SECRET`, and `SERVER_URL` (sandbox values). Do NOT use those in production.
+- Recommended: move sensitive values to environment variables (see `.env.example`).
+- Session secret is currently a placeholder; replace with a secure random value for real deployments.
 
-Typical flow:
+Routes (BankID app):
 
-1. Visit `https://localhost:3000/` in your browser.
-2. Click/visit the `loginUrl` (`/auth/bankid`) to be redirected to the BankID sandbox.
-3. Authenticate with the sandbox provider and return to the callback which will set a session.
-4. View `/user` to inspect combined claims + userinfo.
+- GET /  Status; shows `loginUrl` when not authenticated and profile when authenticated.
+- GET /auth/bankid  Start OIDC flow (redirects to provider).
+- GET /auth/bankid/callback  Callback that exchanges code for tokens and fetches userinfo.
+- GET /user  Returns combined profile data (ID token claims + userinfo).
+- GET /logout  Destroys session.
+- GET /auth/failure  Authentication error page.
+
+TLS / certs
+
+The BankID example expects the TLS files at `certs/localhost-key.pem` and `certs/localhost-cert.pem`. They are self-signed for local testing and will trigger browser warnings. Use mkcert or a trusted cert in production.
+
+## SharePoint / Microsoft Graph example (src/sharePoint.ts)
+
+- App-only authentication using `@azure/msal-node` (Client Credentials flow) and `@microsoft/microsoft-graph-client`.
+- Implements basic CRUD endpoints for files and folders in a SharePoint document library (target: `Dokumenty` / `Documents`).
+
+Required environment variables (see `.env.example`):
+
+- TENANT_ID
+- CLIENT_ID
+- CLIENT_SECRET
+- SITE_ID
+- SHAREPOINT_SITE_URL
+
+SharePoint routes (examples):
+
+- GET /  API overview
+- GET /health  Health check (verifies Graph access to the target site)
+- GET /files  List files in the Dokumenty/Documents library
+- GET /files/:fileName  Get metadata for a file
+- GET /files/:fileName/download  Download a file
+- POST /files/upload  Upload via multipart/form-data (field `file`)
+- POST /files  Upload small files via JSON (name + content)
+- PUT /files/:fileName  Replace file content
+- DELETE /files/:fileName  Delete a file
+- GET /folders  List folders
+- POST /folders  Create a folder
+- DELETE /folders/:folderName  Delete a folder
+
+Upload behavior:
+
+- Files smaller than 4MB use a simple PUT to `/content`.
+- Files >= 4MB use a resumable upload session (chunked upload).
+- The server limits uploads to ~250MB (configured in Multer). Adjust as needed.
+
+## Environment examples
+
+Create a `.env` (not checked into source) based on `.env.example` and set the required values before starting the SharePoint app. Example variables used by the repository:
+
+- For SharePoint (`src/sharePoint.ts`): TENANT_ID, CLIENT_ID, CLIENT_SECRET, SITE_ID, SHAREPOINT_SITE_URL
+- For BankID it's recommended to add: BANKID_CLIENT_ID, BANKID_CLIENT_SECRET, LISTEN_ORIGIN (or edit `src/bankId.ts` directly)
 
 ## Troubleshooting
 
-- If the server fails to start because of TLS files, verify the files exist in `certs/` and are readable.
-- If the provider rejects the client or redirect URI, check the registered client configuration on the BankID sandbox dashboard and ensure `redirect_uris` and client credentials match.
-- If you see state/nonce mismatches, verify your browser allows cookies (sessions are used to store PKCE/verifier, state and nonce).
+- If BankID server fails to start because TLS files are missing, verify `certs/localhost-key.pem` and `certs/localhost-cert.pem` exist.
+- If the OpenID provider rejects the client or redirect URI, ensure registered client configuration matches the `redirect_uris` used by `src/bankId.ts` (default `https://localhost:3000/auth/bankid/callback`).
+- For state/nonce mismatches, ensure your browser accepts cookies; sessions store PKCE verifier, state and nonce.
+- For SharePoint Graph errors, verify app registration credentials and that the app has appropriate Graph API permissions (application-level) and SITE_ID is correct.
