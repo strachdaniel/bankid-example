@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import 'isomorphic-fetch';
 import dotenv from 'dotenv';
+import axios from 'axios';
 
 // Load .env early
 dotenv.config();
@@ -261,60 +262,128 @@ app.get('/files/:fileName', async (req, res) => {
   }
 });
 
-// GET /files/:fileName/download - Download a file
+// GET /files/:fileName/download - Download a file using axios streaming
 app.get('/files/:fileName/download', async (req, res) => {
   try {
     const { fileName } = req.params;
     const driveId = await getDriveId();
-    
-    // Get file info and download URL
-    const file = await graphClient
-      .api(`/drives/${driveId}/root:/${fileName}`)
-      .select('id,name,size,@microsoft.graph.downloadUrl')
+
+    // Get file metadata to set headers
+    const fileMeta = await graphClient
+      .api(`/drives/${driveId}/root:/${encodeURIComponent(fileName)}`)
+      .select('id,name,size')
       .get();
 
-    const downloadUrl = file['@microsoft.graph.downloadUrl'];
-    
-    if (!downloadUrl) {
-      return res.status(404).json({ error: 'Download URL not available' });
+    if (!fileMeta || !fileMeta.id) {
+      return res.status(404).json({ error: 'File not found' });
     }
 
-    // Stream the file from SharePoint to the client
-    const response = await fetch(downloadUrl);
+    // Set headers for browser download
+    res.setHeader('Content-Disposition', `attachment; filename="${fileMeta.name}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+
+    // Get access token for axios request
+    const accessToken = await authProvider.getAccessToken();
     
-    if (!response.ok) {
-      throw new Error(`Failed to fetch file: ${response.statusText}`);
+    // Use axios to stream the file content
+    const downloadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(fileName)}:/content`;
+
+
+    const axiosResponse = await axios({
+      method: 'GET',
+      url: downloadUrl,
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/octet-stream'
+      },
+      responseType: 'stream'
+    });
+
+    // Set content length if available
+    const contentLength = axiosResponse.headers['content-length'];
+    if (contentLength) {
+      res.setHeader('Content-Length', contentLength);
     }
 
-    // Set appropriate headers
-    res.setHeader('Content-Disposition', `attachment; filename="${file.name}"`);
-    res.setHeader('Content-Type', response.headers.get('content-type') || 'application/octet-stream');
-    res.setHeader('Content-Length', file.size);
+    // Pipe the axios response stream directly to the client
+    axiosResponse.data.pipe(res);
 
-    // Pipe the response stream to the client
-    if (response.body) {
-      const reader = response.body.getReader();
-      
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          res.write(Buffer.from(value));
-        }
-        res.end();
-      } finally {
-        reader.releaseLock();
+    // Error handling
+    axiosResponse.data.on('error', (err: any) => {
+      console.error('Axios stream error:', err);
+      if (!res.headersSent) {
+        res.status(500).end('Error streaming file');
       }
-    } else {
-      res.status(500).json({ error: 'No file content available' });
+    });
+
+    // If client aborts, destroy the axios stream
+    res.on('close', () => {
+      try {
+        if (axiosResponse.data.destroy) {
+          axiosResponse.data.destroy();
+        }
+      } catch (e) {
+        console.log('Error destroying axios stream:', (e as any)?.message || e);
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Error downloading file with axios:', error);
+    if (!res.headersSent) {
+      if (error.response?.status === 404 || error.code === 'itemNotFound') {
+        res.status(404).json({ error: 'File not found' });
+      } else {
+        res.status(500).json({ 
+          error: 'Failed to download file', 
+          details: error.message,
+          status: error.response?.status 
+        });
+      }
+    }
+  }
+});
+
+// GET /files/:fileName/download-direct - Direct redirect to SharePoint download URL (if available)
+app.get('/files/:fileName/download-direct', async (req, res) => {
+  try {
+    const { fileName } = req.params;
+    const driveId = await getDriveId();
+    
+    console.log('Attempting to get direct download URL for:', fileName);
+    
+    // Get file info including potential download URL
+    const file = await graphClient
+      .api(`/drives/${driveId}/root:/${encodeURIComponent(fileName)}`)
+      .select('id,name,size,@microsoft.graph.downloadUrl,@content.downloadUrl,webUrl')
+      .get();
+
+    console.log('File response for download URL check:', JSON.stringify(file, null, 2));
+
+    // Check various possible download URL fields
+    const downloadUrl = file['@microsoft.graph.downloadUrl'] || file['@content.downloadUrl'];
+    
+    if (downloadUrl) {
+      console.log('Found download URL:', downloadUrl);
+      // Redirect browser directly to Microsoft's download URL
+      res.redirect(downloadUrl);
+    } else {      
+      res.status(404).json({ 
+        error: 'Direct download URL not available',
+        fileInfo: {
+          id: file.id,
+          name: file.name,
+          size: file.size,
+          webUrl: file.webUrl
+        }
+      });
     }
 
   } catch (error: any) {
-    console.error('Error downloading file:', error);
+    console.error('Error getting download URL:', error);
     if (error.code === 'itemNotFound') {
       res.status(404).json({ error: 'File not found' });
     } else {
-      res.status(500).json({ error: 'Failed to download file', details: error.message });
+      res.status(500).json({ error: 'Failed to get download URL', details: error.message });
     }
   }
 });
@@ -552,6 +621,8 @@ app.listen(PORT, () => {
   console.log('  GET    /files/:name - Get file info');
   console.log('  POST   /files      - Upload file');
   console.log('  PUT    /files/:name - Update file');
+  console.log('  GET    /files/:name/download - Download file');
+  console.log('  GET    /files/:name/download-direct - Direct download URL redirect');
   console.log('  DELETE /files/:name - Delete file');
   console.log('  GET    /folders    - List folders');
   console.log('  POST   /folders    - Create folder');
