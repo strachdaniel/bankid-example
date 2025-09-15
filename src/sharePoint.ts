@@ -3,8 +3,7 @@ import { ConfidentialClientApplication } from '@azure/msal-node';
 import { Client } from '@microsoft/microsoft-graph-client';
 import type { AuthenticationProvider } from '@microsoft/microsoft-graph-client';
 import multer from 'multer';
-import fs from 'fs';
-import path from 'path';
+import contentDisposition from 'content-disposition';
 import 'isomorphic-fetch';
 import dotenv from 'dotenv';
 import axios from 'axios';
@@ -18,6 +17,7 @@ const CLIENT_ID = process.env.CLIENT_ID || '';
 const CLIENT_SECRET = process.env.CLIENT_SECRET || '';
 const SITE_ID = process.env.SITE_ID || '';
 const SHAREPOINT_SITE_URL = process.env.SHAREPOINT_SITE_URL || '';
+const PORT = process.env.PORT || 3001;
 
 // Basic validation — fail fast with a helpful message if required values are missing
 const missing = [] as string[];
@@ -110,19 +110,19 @@ async function getDriveId(): Promise<string> {
 }
 
 // Helper function for small file upload (< 4MB)
-async function uploadSmallFile(driveId: string, fileName: string, buffer: Buffer): Promise<any> {
+async function uploadSmallFile(driveId: string, folder: string, fileName: string, buffer: Buffer): Promise<any> {
   return await graphClient
-    .api(`/drives/${driveId}/root:/${fileName}:/content`)
+    .api(`/drives/${driveId}/root:/${folder}/${fileName}:/content`)
     .putStream(buffer);
 }
 
 // Helper function for large file upload (>= 4MB) using resumable upload
-async function uploadLargeFile(driveId: string, fileName: string, buffer: Buffer): Promise<any> {
+async function uploadLargeFile(driveId: string, folder: string, fileName: string, buffer: Buffer): Promise<any> {
   try {
         console.log('Starting large file upload...');
     // Create upload session
     const uploadSession = await graphClient
-      .api(`/drives/${driveId}/root:/${fileName}:/createUploadSession`)
+      .api(`/drives/${driveId}/root:/${folder}/${fileName}:/createUploadSession`)
       .post({
         item: {
           '@microsoft.graph.conflictBehavior': 'replace',
@@ -171,25 +171,33 @@ async function uploadLargeFile(driveId: string, fileName: string, buffer: Buffer
   }
 }
 
+const HELP = `
+SharePoint CRUD API server running on http://localhost:${PORT}
+SharePoint Site: ${SHAREPOINT_SITE_URL}
+Site ID: ${SITE_ID}
+
+Available endpoints:
+  GET    /                                           - API overview
+  GET    /health                                     - Health check
+  GET    /files[/<folder>]                           - List all files
+  GET    /files[/<folder>]/<file>/detail             - Get file info
+  POST   /files[/<folder>]/upload                    - Upload file
+  PUT    /files[/<folder>]/<file>                    - Update file
+  GET    /files[/<folder>]/<file>/download           - Download file
+  GET    /files[/<folder>]/<file>/download-redirect  - Download using redirect
+  DELETE /files[/<folder>]/<file>                    - Delete file
+  GET    /folders[/<folder>]                         - List folders
+  POST   /folders[/<subfolder>]/<folder>             - Create folder
+  DELETE /folders[/<subfolder>]/<folder>             - Delete folder
+`
+
 // Routes
 
 // GET / - API overview
 app.get('/', (req, res) => {
   res.json({
     message: 'SharePoint CRUD API',
-    endpoints: {
-      'GET /': 'This overview',
-      'GET /files': 'List all files in Dokumenty folder',
-      'GET /files/:fileName': 'Get specific file info',
-      'GET /files/:fileName/download': 'Download a file',
-      'POST /files/upload': 'Upload a file (multipart/form-data with "file" field)',
-      'POST /files': 'Upload a file (JSON with fileName and content - for small text files)',
-      'PUT /files/:fileName': 'Update a file',
-      'DELETE /files/:fileName': 'Delete a file',
-      'GET /folders': 'List all folders',
-      'POST /folders': 'Create a new folder',
-      'DELETE /folders/:folderName': 'Delete a folder',
-    },
+    help: HELP.split('\n').map(line => line.trim()),
     uploadInfo: {
       smallFiles: 'Files < 4MB use simple upload',
       largeFiles: 'Files >= 4MB use resumable upload with progress tracking',
@@ -204,73 +212,16 @@ app.get('/', (req, res) => {
   });
 });
 
-// GET /files - List all files in the Documents folder
-app.get('/files', async (req, res) => {
+// GET /files[/folder]/file/download - Download a file using axios streaming
+app.get('/files/*splat/download', async (req, res) => {
   try {
-    const driveId = await getDriveId();
-    const files = await graphClient
-      .api(`/drives/${driveId}/root/children`)
-      .select('id,name,size,lastModifiedDateTime,webUrl,@microsoft.graph.downloadUrl')
-      .get();
-
-    // Filter only files (not folders)
-    const fileItems = files.value.filter((item: any) => item.file);
-
-    res.json({
-      count: fileItems.length,
-      files: fileItems.map((file: any) => ({
-        id: file.id,
-        name: file.name,
-        size: file.size,
-        lastModified: file.lastModifiedDateTime,
-        webUrl: file.webUrl,
-        downloadUrl: file['@microsoft.graph.downloadUrl'],
-      })),
-    });
-  } catch (error) {
-    console.error('Error listing files:', error);
-    res.status(500).json({ error: 'Failed to list files', details: error });
-  }
-});
-
-// GET /files/:fileName - Get specific file info
-app.get('/files/:fileName', async (req, res) => {
-  try {
-    const { fileName } = req.params;
-    const driveId = await getDriveId();
-    
-    const file = await graphClient
-      .api(`/drives/${driveId}/root:/${fileName}`)
-      .select('id,name,size,lastModifiedDateTime,webUrl,@microsoft.graph.downloadUrl')
-      .get();
-
-    res.json({
-      id: file.id,
-      name: file.name,
-      size: file.size,
-      lastModified: file.lastModifiedDateTime,
-      webUrl: file.webUrl,
-      downloadUrl: file['@microsoft.graph.downloadUrl'],
-    });
-  } catch (error: any) {
-    console.error('Error getting file:', error);
-    if (error.code === 'itemNotFound') {
-      res.status(404).json({ error: 'File not found' });
-    } else {
-      res.status(500).json({ error: 'Failed to get file', details: error });
-    }
-  }
-});
-
-// GET /files/:fileName/download - Download a file using axios streaming
-app.get('/files/:fileName/download', async (req, res) => {
-  try {
-    const { fileName } = req.params;
+    const { splat } = req.params;
+    const filePath = splat.join('/');
     const driveId = await getDriveId();
 
     // Get file metadata to set headers
     const fileMeta = await graphClient
-      .api(`/drives/${driveId}/root:/${encodeURIComponent(fileName)}`)
+      .api(`/drives/${driveId}/root:/${encodeURIComponent(filePath)}`)
       .select('id,name,size')
       .get();
 
@@ -279,14 +230,14 @@ app.get('/files/:fileName/download', async (req, res) => {
     }
 
     // Set headers for browser download
-    res.setHeader('Content-Disposition', `attachment; filename="${fileMeta.name}"`);
+    res.setHeader('Content-Disposition', contentDisposition(fileMeta.name));
     res.setHeader('Content-Type', 'application/octet-stream');
 
     // Get access token for axios request
     const accessToken = await authProvider.getAccessToken();
     
     // Use axios to stream the file content
-    const downloadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(fileName)}:/content`;
+    const downloadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(filePath)}:/content`;
 
 
     const axiosResponse = await axios({
@@ -343,21 +294,20 @@ app.get('/files/:fileName/download', async (req, res) => {
   }
 });
 
-// GET /files/:fileName/download-direct - Direct redirect to SharePoint download URL (if available)
-app.get('/files/:fileName/download-direct', async (req, res) => {
+// GET /files[/folder]/file/download-redirect - Direct redirect to SharePoint download URL (if available)
+app.get('/files/*splat/download-redirect', async (req, res) => {
   try {
-    const { fileName } = req.params;
+    const { splat } = req.params;
+    const filePath = splat.join('/');
     const driveId = await getDriveId();
     
-    console.log('Attempting to get direct download URL for:', fileName);
+    console.log('Attempting to get direct download URL for:', filePath);
     
     // Get file info including potential download URL
     const file = await graphClient
-      .api(`/drives/${driveId}/root:/${encodeURIComponent(fileName)}`)
+      .api(`/drives/${driveId}/root:/${encodeURIComponent(filePath)}`)
       .select('id,name,size,@microsoft.graph.downloadUrl,@content.downloadUrl,webUrl')
       .get();
-
-    console.log('File response for download URL check:', JSON.stringify(file, null, 2));
 
     // Check various possible download URL fields
     const downloadUrl = file['@microsoft.graph.downloadUrl'] || file['@content.downloadUrl'];
@@ -369,12 +319,7 @@ app.get('/files/:fileName/download-direct', async (req, res) => {
     } else {      
       res.status(404).json({ 
         error: 'Direct download URL not available',
-        fileInfo: {
-          id: file.id,
-          name: file.name,
-          size: file.size,
-          webUrl: file.webUrl
-        }
+        response: file,
       });
     }
 
@@ -388,105 +333,164 @@ app.get('/files/:fileName/download-direct', async (req, res) => {
   }
 });
 
-// POST /files/upload - Upload a file using multipart/form-data
-app.post('/files/upload',async (req,res,next) => {
-        console.log(req.body)
-        next();
-} , upload.single('file'), async (req, res) => {
+// GET /files[/folder]/file/detail - Get specific file info
+app.get('/files/*splat/detail', async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file provided. Use "file" field in multipart form.' });
-    }
-
-    const { originalname, buffer, size, mimetype } = req.file;
-    const fileName = req.body.fileName || originalname;
-
-    if (!fileName) {
-      return res.status(400).json({ error: 'fileName is required' });
-    }
-
-    console.log(`Uploading file: ${fileName} (${size} bytes, ${mimetype})`);
-
-    const driveId = await getDriveId();
-    let uploadedFile;
-
-    // Choose upload method based on file size
-    if (size < SMALL_FILE_THRESHOLD) {
-      console.log('Using simple upload for small file');
-      uploadedFile = await uploadSmallFile(driveId, fileName, buffer);
-    } else {
-      console.log('Using resumable upload for large file');
-      uploadedFile = await uploadLargeFile(driveId, fileName, buffer);
-    }
-
-    res.status(201).json({
-      message: 'File uploaded successfully',
-      file: {
-        id: uploadedFile.id,
-        name: uploadedFile.name,
-        size: uploadedFile.size,
-        webUrl: uploadedFile.webUrl,
-      },
-      uploadMethod: size < SMALL_FILE_THRESHOLD ? 'simple' : 'resumable',
-      originalSize: size,
-    });
-  } catch (error: any) {
-    console.error('Error uploading file:', error);
-    res.status(500).json({ 
-      error: 'Failed to upload file', 
-      details: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  }
-});
-
-// PUT /files/:fileName - Update a file
-app.put('/files/:fileName', async (req, res) => {
-  try {
-    const { fileName } = req.params;
-    const { content, contentType = 'text/plain' } = req.body;
-
-    if (!content) {
-      return res.status(400).json({ error: 'content is required' });
-    }
-
+    const { splat }  = req.params;
+    const filePath = splat.join('/');
     const driveId = await getDriveId();
     
-    // Convert content to buffer if it's a string
-    const buffer = typeof content === 'string' ? Buffer.from(content) : content;
-
-    const updatedFile = await graphClient
-      .api(`/drives/${driveId}/root:/${fileName}:/content`)
-      .putStream(buffer);
+    const file = await graphClient
+      .api(`/drives/${driveId}/root:/${encodeURIComponent(filePath)}`)
+      .select('id,name,size,lastModifiedDateTime,webUrl,@microsoft.graph.downloadUrl')
+      .get();
 
     res.json({
-      message: 'File updated successfully',
-      file: {
-        id: updatedFile.id,
-        name: updatedFile.name,
-        size: updatedFile.size,
-        webUrl: updatedFile.webUrl,
-      },
+      id: file.id,
+      name: file.name,
+      size: file.size,
+      lastModified: file.lastModifiedDateTime,
+      webUrl: file.webUrl,
+      downloadUrl: file['@microsoft.graph.downloadUrl'],
     });
   } catch (error: any) {
-    console.error('Error updating file:', error);
+    console.error('Error getting file:', error);
     if (error.code === 'itemNotFound') {
       res.status(404).json({ error: 'File not found' });
     } else {
-      res.status(500).json({ error: 'Failed to update file', details: error });
+      res.status(500).json({ error: 'Failed to get file', details: error });
     }
   }
 });
 
-// DELETE /files/:fileName - Delete a file
-app.delete('/files/:fileName', async (req, res) => {
+// GET /files[/folder] - List all files
+app.get('/files{/*splat}', async (req, res) => {
   try {
-    const { fileName } = req.params;
+    const { splat } = req.params;
+    const folder = (splat ?? []).join('/');
+    const driveId = await getDriveId();
+    const requestPath = !!folder ? 
+    `/drives/${driveId}/root:/${folder}:/children` :
+    `/drives/${driveId}/root/children`;
+    const files = await graphClient
+      .api(requestPath)
+      .select('id,name,size,lastModifiedDateTime,webUrl,@microsoft.graph.downloadUrl,file')
+      .get();
+
+    // Filter only files (not folders)
+    const fileItems = files.value.filter((item: any) => item.file);
+
+    res.json({
+      count: fileItems.length,
+      files: fileItems.map((file: any) => ({
+        id: file.id,
+        name: file.name,
+        size: file.size,
+        lastModified: file.lastModifiedDateTime,
+        webUrl: file.webUrl,
+        downloadUrl: file['@microsoft.graph.downloadUrl'],
+      })),
+    });
+  } catch (error) {
+    console.error('Error listing files:', error);
+    res.status(500).json({ error: 'Failed to list files', details: error });
+  }
+});
+
+// POST /files[/folder]/upload - Upload a file using multipart/form-data
+app.post(
+  '/files{/*splat}/upload',
+  upload.single('file'),
+  async (req, res) => {
+    try {
+      const { splat } = req.params;
+      const folder = (splat ?? []).join('/');
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file provided. Use "file" field in multipart form.' });
+      }
+
+      const { originalname, buffer, size, mimetype } = req.file;
+      const fileName = req.body.fileName || originalname;
+
+      if (!fileName) {
+        return res.status(400).json({ error: 'fileName is required' });
+      }
+
+      console.log(`Uploading file: ${fileName} (${size} bytes, ${mimetype})`);
+
+      const driveId = await getDriveId();
+      let uploadedFile;
+
+      // Choose upload method based on file size
+      if (size < SMALL_FILE_THRESHOLD) {
+        console.log('Using simple upload for small file');
+        uploadedFile = await uploadSmallFile(driveId, folder, fileName, buffer);
+      } else {
+        console.log('Using resumable upload for large file');
+        uploadedFile = await uploadLargeFile(driveId, folder, fileName, buffer);
+      }
+
+      res.status(201).json({
+        message: 'File uploaded successfully',
+        response: uploadedFile,
+        uploadMethod: size < SMALL_FILE_THRESHOLD ? 'simple' : 'resumable',
+        originalSize: size,
+      });
+    } catch (error: any) {
+      console.error('Error uploading file:', error);
+      res.status(500).json({ 
+        error: 'Failed to upload file', 
+        details: error.message,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
+    }
+});
+
+// PUT /files[/folder]/file - Update a file
+app.put(
+  '/files/*splat',
+  upload.single('file'),
+  async (req, res) => {
+    try {
+      const { splat } = req.params;
+      const filePath = splat.join('/');
+      
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file provided. Use "file" field in multipart form.' });
+      }
+      const { buffer } = req.file;
+
+      const driveId = await getDriveId();
+      
+      const updatedFile = await graphClient
+        .api(`/drives/${driveId}/root:/${filePath}:/content`)
+        .putStream(buffer);
+
+      res.json({
+        message: 'File updated successfully',
+        response: updatedFile,
+      });
+    } catch (error: any) {
+      console.error('Error updating file:', error);
+      if (error.code === 'itemNotFound') {
+        res.status(404).json({ error: 'File not found' });
+      } else {
+        res.status(500).json({ error: 'Failed to update file', details: error });
+      }
+    }
+});
+
+// DELETE /files[/folder]/file - Delete a file
+app.delete('/files/*splat', async (req, res) => {
+  try {
+    const { splat } = req.params;
+    const filePath = splat.join('/');
     const driveId = await getDriveId();
 
-    await graphClient.api(`/drives/${driveId}/root:/${fileName}`).delete();
+    const response = await graphClient.api(`/drives/${driveId}/root:/${filePath}`).delete();
 
-    res.json({ message: 'File deleted successfully', fileName });
+    res.json({ message: 'File deleted successfully', filePath, response });
   } catch (error: any) {
     console.error('Error deleting file:', error);
     if (error.code === 'itemNotFound') {
@@ -497,12 +501,17 @@ app.delete('/files/:fileName', async (req, res) => {
   }
 });
 
-// GET /folders - List all folders
-app.get('/folders', async (req, res) => {
+// GET /folders[/folder] - List all folders
+app.get('/folders{/*splat}', async (req, res) => {
   try {
+    const { splat } = req.params;
+    const folder = (splat ?? []).join('/');
     const driveId = await getDriveId();
+    const requestPath = !!folder ? 
+    `/drives/${driveId}/root:/${folder}:/children` :
+    `/drives/${driveId}/root/children`;
     const items = await graphClient
-      .api(`/drives/${driveId}/root/children`)
+      .api(requestPath)
       .select('id,name,lastModifiedDateTime,webUrl,folder')
       .get();
 
@@ -525,10 +534,11 @@ app.get('/folders', async (req, res) => {
   }
 });
 
-// POST /folders - Create a new folder
-app.post('/folders', async (req, res) => {
+// POST /folders[/subfolder]/folder - Create a new folder
+app.post('/folders/*splat', async (req, res) => {
   try {
-    const { folderName } = req.body;
+    const { splat } = req.params;
+    const folderName = splat.join('/');
 
     if (!folderName) {
       return res.status(400).json({ error: 'folderName is required' });
@@ -537,11 +547,10 @@ app.post('/folders', async (req, res) => {
     const driveId = await getDriveId();
 
     const newFolder = await graphClient
-      .api(`/drives/${driveId}/root/children`)
-      .post({
-        name: folderName,
+      .api(`/drives/${driveId}/root:/${folderName}`)
+      .patch({
         folder: {},
-        '@microsoft.graph.conflictBehavior': 'rename',
+        '@microsoft.graph.conflictBehavior': 'fail',
       });
 
     res.status(201).json({
@@ -558,10 +567,16 @@ app.post('/folders', async (req, res) => {
   }
 });
 
-// DELETE /folders/:folderName - Delete a folder
-app.delete('/folders/:folderName', async (req, res) => {
+// DELETE /folders[/subfolder]/folder - Delete a folder
+app.delete('/folders/*splat', async (req, res) => {
   try {
-    const { folderName } = req.params;
+    const { splat } = req.params;
+    const folderName = splat.join('/')
+    
+    if (!folderName) {
+      return res.status(400).json({ error: 'folderName is required' });
+    }
+
     const driveId = await getDriveId();
 
     await graphClient.api(`/drives/${driveId}/root:/${folderName}`).delete();
@@ -609,24 +624,8 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 // Start the server
-const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`SharePoint CRUD API server running on http://localhost:${PORT}`);
-  console.log(`SharePoint Site: ${SHAREPOINT_SITE_URL}`);
-  console.log(`Site ID: ${SITE_ID}`);
-  console.log('\nAvailable endpoints:');
-  console.log('  GET    /           - API overview');
-  console.log('  GET    /health     - Health check');
-  console.log('  GET    /files      - List all files');
-  console.log('  GET    /files/:name - Get file info');
-  console.log('  POST   /files      - Upload file');
-  console.log('  PUT    /files/:name - Update file');
-  console.log('  GET    /files/:name/download - Download file');
-  console.log('  GET    /files/:name/download-direct - Direct download URL redirect');
-  console.log('  DELETE /files/:name - Delete file');
-  console.log('  GET    /folders    - List folders');
-  console.log('  POST   /folders    - Create folder');
-  console.log('  DELETE /folders/:name - Delete folder');
+  console.log(HELP);
 });
 
 export default app;
