@@ -77,18 +77,18 @@ Required environment variables (see `.env.example`):
 
 SharePoint routes (examples):
 
-- GET /  API overview
-- GET /health  Health check (verifies Graph access to the target site)
-- GET /files  List files in the Dokumenty/Documents library
-- GET /files/:fileName  Get metadata for a file
-- GET /files/:fileName/download  Download a file
-- POST /files/upload  Upload via multipart/form-data (field `file`)
-- POST /files  Upload small files via JSON (name + content)
-- PUT /files/:fileName  Replace file content
-- DELETE /files/:fileName  Delete a file
-- GET /folders  List folders
-- POST /folders  Create a folder
-- DELETE /folders/:folderName  Delete a folder
+- GET    /                                           - API overview
+- GET    /health                                     - Health check
+- GET    /files[/<folder>]                           - List all files
+- GET    /files[/<folder>]/<file>/detail             - Get file info
+- POST   /files[/<folder>]/upload                    - Upload file
+- PUT    /files[/<folder>]/<file>                    - Update file
+- GET    /files[/<folder>]/<file>/download           - Download file
+- GET    /files[/<folder>]/<file>/download-redirect  - Download using redirect
+- DELETE /files[/<folder>]/<file>                    - Delete file
+- GET    /folders[/<folder>]                         - List folders
+- POST   /folders[/<subfolder>]/<folder>             - Create folder
+- DELETE /folders[/<subfolder>]/<folder>             - Delete folder
 
 Upload behavior:
 

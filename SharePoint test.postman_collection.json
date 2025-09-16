@@ -1,0 +1,254 @@
+{
+	"info": {
+		"_postman_id": "f288ac61-dc69-44d2-8b5d-6919d238a9ae",
+		"name": "SharePoint test",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "3231290",
+		"_collection_link": "https://qest66.postman.co/workspace/Qest~8e4d1326-ab63-46fb-b5a9-59841b2570c3/collection/3231290-f288ac61-dc69-44d2-8b5d-6919d238a9ae?action=share&source=collection_link&creator=3231290"
+	},
+	"item": [
+		{
+			"name": "Get endpoints",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						""
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "List files",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"folder\": \"\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseURL}}/files",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"files"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get file",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseURL}}/files/Dokumenty/giphy.gif",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"files",
+						"Dokumenty",
+						"giphy.gif"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Download file streaming",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseURL}}/files/General/Archív - předání.xlsx/download",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"files",
+						"General",
+						"Archív - předání.xlsx",
+						"download"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Delete file",
+			"request": {
+				"method": "DELETE",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseURL}}/files/Dokumenty/giphy.gif",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"files",
+						"Dokumenty",
+						"giphy.gif"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "List folders",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/folders",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"folders"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Create folder",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"folderName\": \"MyFiles\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseURL}}/folders",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"folders"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Delete folder",
+			"request": {
+				"method": "DELETE",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"folderName\": \"MyFiles\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{baseURL}}/folders/MyFolder",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"folders",
+						"MyFolder"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Upload file",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "file",
+							"type": "file",
+							"src": "/home/kowalsky/Downloads/giphy.gif"
+						}
+					]
+				},
+				"url": {
+					"raw": "{{baseURL}}/files/Dokumenty/upload",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"files",
+						"Dokumenty",
+						"upload"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "baseURL",
+			"value": "http://localhost:3001",
+			"type": "default"
+		}
+	]
+}
